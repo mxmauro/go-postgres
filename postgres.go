@@ -14,7 +14,6 @@ import (
 // -----------------------------------------------------------------------------
 
 type WithinTxCallback = func(ctx context.Context, tx Tx) error
-type QueryRowsCallback = func(ctx context.Context, rows RowGetter) (bool, error)
 type CopyCallback func(ctx context.Context, idx int) ([]interface{}, error)
 
 // -----------------------------------------------------------------------------
@@ -122,8 +121,8 @@ func (db *Database) SetEventHandler(handler ErrorHandler) {
 }
 
 // Exec executes an SQL statement on a new connection
-func (db *Database) Exec(ctx context.Context, params QueryParams) (int64, error) {
-	ct, err := db.pool.Exec(ctx, params.sql, params.args...)
+func (db *Database) Exec(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+	ct, err := db.pool.Exec(ctx, sql, args...)
 	return ct.RowsAffected(), db.processError(err)
 }
 
@@ -138,34 +137,22 @@ func (db *Database) Exec(ctx context.Context, params QueryParams) (int64, error)
 //     the field in the query.
 //  3. To avoid overflows on high uint64 values, store them in NUMERIC(24,0) fields.
 //  4. For time-only fields, date is set to Jan 1, 2000 by PGX in time.Time variables.
-func (db *Database) QueryRow(ctx context.Context, params QueryParams, dest ...interface{}) error {
-	row := db.pool.QueryRow(ctx, params.sql, params.args...)
-	err := row.Scan(dest...)
-	return db.processError(err)
+func (db *Database) QueryRow(ctx context.Context, sql string, args ...interface{}) Row {
+	return rowGetter{
+		db:  db,
+		row: db.pool.QueryRow(ctx, sql, args...),
+	}
 }
 
 // QueryRows executes a SQL query on a new connection
-func (db *Database) QueryRows(ctx context.Context, params QueryParams, callback QueryRowsCallback) error {
-	rows, err := db.pool.Query(ctx, params.sql, params.args...)
-	if err == nil {
-		// Scan returned rows
-		rg := rowsGetter{
-			db:   db,
-			rows: rows,
-		}
-		for rows.Next() {
-			var cont bool
-
-			cont, err = callback(ctx, rg)
-			if err != nil || (!cont) {
-				break
-			}
-		}
-		rows.Close()
+func (db *Database) QueryRows(ctx context.Context, sql string, args ...interface{}) Rows {
+	rows, err := db.pool.Query(ctx, sql, args...)
+	return rowsGetter{
+		db:   db,
+		ctx:  ctx,
+		rows: rows,
+		err:  err,
 	}
-
-	// Done
-	return db.processError(err)
 }
 
 // Copy executes a SQL copy query within the transaction.

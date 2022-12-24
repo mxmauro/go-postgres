@@ -143,6 +143,13 @@ func TestPostgres(t *testing.T) {
 		t.Fatalf("%v", err.Error())
 	}
 
+	t.Log("Reading test data (multi-row)")
+	err = readMultiTestData(ctx, db)
+	if err != nil {
+		db.Close()
+		t.Fatalf("%v", err.Error())
+	}
+
 	db.Close()
 }
 
@@ -168,13 +175,13 @@ func checkSettings(t *testing.T) {
 
 func createTestTable(ctx context.Context, db *postgres.Database) error {
 	// Destroy old test table if exists
-	_, err := db.Exec(ctx, postgres.NewQueryParams(`DROP TABLE IF EXISTS go_postgres_test_table CASCADE`))
+	_, err := db.Exec(ctx, `DROP TABLE IF EXISTS go_postgres_test_table CASCADE`)
 	if err != nil {
 		return fmt.Errorf("Unable to drop tables [err=%v]", err.Error())
 	}
 
 	// Create the test table
-	_, err = db.Exec(ctx, postgres.NewQueryParams(`CREATE TABLE go_postgres_test_table (
+	_, err = db.Exec(ctx, `CREATE TABLE go_postgres_test_table (
 		id   INT NOT NULL,
 		num  NUMERIC(24, 0) NULL,
 		sm   SMALLINT NULL,
@@ -192,7 +199,7 @@ func createTestTable(ctx context.Context, db *postgres.Database) error {
 		js   JSONB NULL,
 
 		PRIMARY KEY (id)
-	)`))
+	)`)
 	if err != nil {
 		return fmt.Errorf("Unable to create test table [err=%v]", err.Error())
 	}
@@ -202,7 +209,6 @@ func createTestTable(ctx context.Context, db *postgres.Database) error {
 }
 
 func insertTestData(ctx context.Context, db *postgres.Database) error {
-
 	return db.WithinTx(ctx, func(ctx context.Context, tx postgres.Tx) error {
 		for idx := 1; idx <= 2; idx++ {
 			rd := genTestRowDef(idx, true)
@@ -220,21 +226,54 @@ func insertTestData(ctx context.Context, db *postgres.Database) error {
 		// Done
 		return nil
 	})
-
 }
 
 func readTestData(ctx context.Context, db *postgres.Database) error {
 	for idx := 1; idx <= 2; idx++ {
-		rd := genTestRowDef(idx, false)
-		err := readTestRowDef(ctx, db, rd)
+		compareRd := genTestRowDef(idx, false)
+		rd, err := readTestRowDef(ctx, db, compareRd.id)
 		if err != nil {
-			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", rd.id, err.Error())
+			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", compareRd.id, err.Error())
+		}
+		// Do deep comparison
+		if !reflect.DeepEqual(compareRd, rd) {
+			return errors.New("data mismatch")
 		}
 
-		nrd := genTestNullableRowDef(idx, false)
-		err = readTestNullableRowDef(ctx, db, nrd)
+		compareNrd := genTestNullableRowDef(idx, false)
+		nrd, err := readTestNullableRowDef(ctx, db, compareNrd.id)
 		if err != nil {
-			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", nrd.id, err.Error())
+			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", compareNrd.id, err.Error())
+		}
+
+		// Do deep comparison
+		if !reflect.DeepEqual(compareNrd, nrd) {
+			return fmt.Errorf("Data mismatch while comparing test data [id=%v]", compareNrd.id)
+		}
+	}
+
+	// Done
+	return nil
+}
+
+func readMultiTestData(ctx context.Context, db *postgres.Database) error {
+	compareRd := make([]TestRowDef, 0)
+	for idx := 1; idx <= 2; idx++ {
+		compareRd = append(compareRd, genTestRowDef(idx, false))
+	}
+	rd, err := readMultiTestRowDef(ctx, db, compareRd)
+	if err != nil {
+		return fmt.Errorf("Unable to verify test data [err=%v]", err.Error())
+	}
+
+	// Do deep comparison
+	if len(compareRd) != len(rd) {
+		return fmt.Errorf("Data mismatch while comparing test data [len1=%d/len2=%d]", len(compareRd), len(rd))
+	}
+
+	for idx := 0; idx < len(rd); idx++ {
+		if !reflect.DeepEqual(compareRd[idx], rd[idx]) {
+			return fmt.Errorf("Data mismatch while comparing test data [id=%v]", compareRd[idx].id)
 		}
 	}
 
@@ -348,7 +387,7 @@ func genTestNullableRowDef(index int, write bool) TestNullableRowDef {
 }
 
 func insertTestRowDef(ctx context.Context, tx postgres.Tx, rd TestRowDef) error {
-	_, err := tx.Exec(ctx, postgres.NewQueryParams(`
+	_, err := tx.Exec(ctx, `
 		INSERT INTO go_postgres_test_table (
 			id, num, sm, bi, bi2, dbl, va, chr, txt, blob, ts, dt, tim, b, js
 		) VALUES (
@@ -356,45 +395,81 @@ func insertTestRowDef(ctx context.Context, tx postgres.Tx, rd TestRowDef) error 
 		)
 	`,
 		rd.id, rd.num, rd.sm, rd.bi, rd.bi2, rd.dbl, rd.va, rd.chr, rd.txt, rd.blob, rd.ts, rd.dt, rd.tim, rd.b, rd.js,
-	))
+	)
 	return err
 }
 
-func readTestRowDef(ctx context.Context, db *postgres.Database, compareRd TestRowDef) error {
+func readTestRowDef(ctx context.Context, db *postgres.Database, id int) (TestRowDef, error) {
 	rd := TestRowDef{}
-	err := db.QueryRow(ctx, postgres.NewQueryParams(`
+	err := db.QueryRow(ctx, `
 		SELECT
 			id, num, sm, bi, bi2, dbl, va, chr, txt, blob, ts, dt, tim, b, js
 		FROM
 			go_postgres_test_table
 		WHERE
 			id = $1
-	`, compareRd.id),
+	`, id).Scan(
 		&rd.id, &rd.num, &rd.sm, &rd.bi, &rd.bi2, &rd.dbl, &rd.va, &rd.chr, &rd.txt, &rd.blob, &rd.ts, &rd.dt, &rd.tim,
 		&rd.b, &rd.js,
 	)
 	if err != nil {
-		return err
+		return TestRowDef{}, err
 	}
 
 	// JSON data returned by Postgres can contain spaces and other encoding so re-encode the returned string
 	// for comparison
 	rd.js, err = jsonReEncode(rd.js)
 	if err != nil {
-		return err
-	}
-
-	// Do deep comparison
-	if !reflect.DeepEqual(compareRd, rd) {
-		return errors.New("data mismatch")
+		return TestRowDef{}, err
 	}
 
 	// Done
-	return nil
+	return rd, nil
+}
+
+func readMultiTestRowDef(ctx context.Context, db *postgres.Database, compareRd []TestRowDef) ([]TestRowDef, error) {
+	// Populate ids
+	ids := make([]int, len(compareRd))
+	for idx := 0; idx < len(compareRd); idx++ {
+		ids[idx] = compareRd[idx].id
+	}
+
+	rd := make([]TestRowDef, 0)
+	err := db.QueryRows(ctx, `
+		SELECT
+			id, num, sm, bi, bi2, dbl, va, chr, txt, blob, ts, dt, tim, b, js
+		FROM
+			go_postgres_test_table
+		WHERE
+			id = ANY($1)
+	`, ids).Do(func(ctx context.Context, row postgres.Row) (bool, error) {
+		item := TestRowDef{}
+		err := row.Scan(&item.id, &item.num, &item.sm, &item.bi, &item.bi2, &item.dbl, &item.va, &item.chr, &item.txt,
+			&item.blob, &item.ts, &item.dt, &item.tim, &item.b, &item.js)
+		if err == nil {
+			rd = append(rd, item)
+		}
+		return true, err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// JSON data returned by Postgres can contain spaces and other encoding so re-encode the returned string
+	// for comparison
+	for idx := range rd {
+		rd[idx].js, err = jsonReEncode(rd[idx].js)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Done
+	return rd, nil
 }
 
 func insertTestNullableRowDef(ctx context.Context, tx postgres.Tx, nrd TestNullableRowDef) error {
-	_, err := tx.Exec(ctx, postgres.NewQueryParams(`
+	_, err := tx.Exec(ctx, `
 		INSERT INTO go_postgres_test_table (
 			id, num, sm, bi, bi2, dbl, va, chr, txt, blob, ts, dt, tim, b, js
 		) VALUES (
@@ -403,25 +478,25 @@ func insertTestNullableRowDef(ctx context.Context, tx postgres.Tx, nrd TestNulla
 	`,
 		nrd.id, nrd.num, nrd.sm, nrd.bi, nrd.bi2, nrd.dbl, nrd.va, nrd.chr, nrd.txt, nrd.blob, nrd.ts, nrd.dt, nrd.tim,
 		nrd.b, nrd.js,
-	))
+	)
 	return err
 }
 
-func readTestNullableRowDef(ctx context.Context, db *postgres.Database, compareNrd TestNullableRowDef) error {
+func readTestNullableRowDef(ctx context.Context, db *postgres.Database, id int) (TestNullableRowDef, error) {
 	nrd := TestNullableRowDef{}
-	err := db.QueryRow(ctx, postgres.NewQueryParams(`
+	err := db.QueryRow(ctx, `
 		SELECT
 			id, num, sm, bi, bi2, dbl, va, chr, txt, blob, ts, dt, tim, b, js::text
 		FROM
 			go_postgres_test_table
 		WHERE
 			id = $1
-	`, compareNrd.id),
+	`, id).Scan(
 		&nrd.id, &nrd.num, &nrd.sm, &nrd.bi, &nrd.bi2, &nrd.dbl, &nrd.va, &nrd.chr, &nrd.txt, &nrd.blob, &nrd.ts,
 		&nrd.dt, &nrd.tim, &nrd.b, &nrd.js,
 	)
 	if err != nil {
-		return err
+		return TestNullableRowDef{}, err
 	}
 
 	// JSON data returned by Postgres can contain spaces and other encoding so re-encode the returned string
@@ -431,18 +506,13 @@ func readTestNullableRowDef(ctx context.Context, db *postgres.Database, compareN
 
 		js, err = jsonReEncode(*nrd.js)
 		if err != nil {
-			return err
+			return TestNullableRowDef{}, err
 		}
 		nrd.js = &js
 	}
 
-	// Do deep comparison
-	if !reflect.DeepEqual(compareNrd, nrd) {
-		return errors.New("data mismatch")
-	}
-
 	// Done
-	return nil
+	return nrd, nil
 }
 
 func addressOf[T any](x T) *T {

@@ -53,19 +53,14 @@ func main() {
 		Name: "example",
 	}
 
-	_, err = db.Exec(ctx, postgres.NewQueryParams(
-		`INSERT INTO test_table (id, name) VALUES ($1, $2)`, data.Id, data.Name),
-	)
+	_, err = db.Exec(ctx, `INSERT INTO test_table (id, name) VALUES ($1, $2)`, data.Id, data.Name)
 	if err != nil {
 		// ....
 	}
 
 	// Read it
 	var name string
-	err = db.QueryRow(ctx, postgres.NewQueryParams(
-		`SELECT name FROM test_table WHERE id = $1)`, 1),
-		&name,
-	)
+	err = db.QueryRow(ctx, `SELECT name FROM test_table WHERE id = $1)`, 1).Scan(&name)
 	if err != nil {
 		// ....
 		if postgres.IsNoRowsError(err) {
@@ -76,7 +71,6 @@ func main() {
 	// ....
 }
 ```
-
 
 ## LICENSE
 
