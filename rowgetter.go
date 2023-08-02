@@ -6,7 +6,9 @@ import (
 
 // -----------------------------------------------------------------------------
 
+// Row defines a returned record.
 type Row interface {
+	// Scan saves the content of the current row in the destination variables.
 	Scan(dest ...interface{}) error
 }
 

@@ -13,11 +13,15 @@ import (
 
 // -----------------------------------------------------------------------------
 
+// WithinTxCallback defines a callback called in the context of the initiated transaction.
 type WithinTxCallback = func(ctx context.Context, tx Tx) error
+
+// CopyCallback defines a callback that is called for each record being copied to the database
 type CopyCallback func(ctx context.Context, idx int) ([]interface{}, error)
 
 // -----------------------------------------------------------------------------
 
+// Database represents a PostgreSQL database accessor.
 type Database struct {
 	pool *pgxpool.Pool
 	err  struct {
@@ -27,6 +31,7 @@ type Database struct {
 	}
 }
 
+// Options defines the database connection options.
 type Options struct {
 	Host     string `json:"host"`
 	Port     uint16 `json:"port"`
@@ -37,8 +42,10 @@ type Options struct {
 	SSLMode  SSLMode
 }
 
+// ErrorHandler defines a custom error handler.
 type ErrorHandler func(err error)
 
+// SSLMode states if secure communication with the server is optional or mandatory.
 type SSLMode int
 
 const (

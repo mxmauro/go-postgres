@@ -8,6 +8,7 @@ import (
 
 // -----------------------------------------------------------------------------
 
+// Tx encloses a transation object.
 type Tx struct {
 	db *Database
 	tx pgx.Tx
