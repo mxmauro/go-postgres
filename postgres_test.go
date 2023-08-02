@@ -117,7 +117,8 @@ func TestPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err.Error())
 	}
-	// We comment the next line because we want to do a clean database pool shutdown on errors
+	// We comment the next defer line because we want to do a clean database pool shutdown on errors and
+	// calling fatal exits the process.
 	// defer db.Close()
 
 	ctx := context.Background()

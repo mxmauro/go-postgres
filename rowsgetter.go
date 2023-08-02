@@ -8,9 +8,12 @@ import (
 
 // -----------------------------------------------------------------------------
 
+// ScanRowsCallback defines a callback that is called on each row returned by the executed query.
 type ScanRowsCallback = func(ctx context.Context, row Row) (bool, error)
 
+// Rows defines a set of returned records.
 type Rows interface {
+	// Do calls the provided callback for each row returned by the executed query.
 	Do(callback ScanRowsCallback) error
 }
 
