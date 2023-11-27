@@ -11,6 +11,25 @@ import (
 type Error struct {
 	message string
 	err     error // Err is the underlying error that occurred during the operation.
+	Details *ErrorDetails
+}
+
+type ErrorDetails struct {
+	Severity       string
+	Code           string
+	Message        string
+	Detail         string
+	Hint           string
+	Position       int32
+	Where          string
+	SchemaName     string
+	TableName      string
+	ColumnName     string
+	DataTypeName   string
+	ConstraintName string
+	File           string
+	Line           int32
+	Routine        string
 }
 
 // NoRowsError is the error we return if the query does not return any row.

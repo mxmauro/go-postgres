@@ -130,6 +130,9 @@ func (db *Database) SetEventHandler(handler ErrorHandler) {
 // Exec executes an SQL statement on a new connection
 func (db *Database) Exec(ctx context.Context, sql string, args ...interface{}) (int64, error) {
 	ct, err := db.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		err = newError(err, "unable to execute command")
+	}
 	return ct.RowsAffected(), db.processError(err)
 }
 
@@ -145,7 +148,7 @@ func (db *Database) Exec(ctx context.Context, sql string, args ...interface{}) (
 //  3. To avoid overflows on high uint64 values, store them in NUMERIC(24,0) fields.
 //  4. For time-only fields, date is set to Jan 1, 2000 by PGX in time.Time variables.
 func (db *Database) QueryRow(ctx context.Context, sql string, args ...interface{}) Row {
-	return rowGetter{
+	return &rowGetter{
 		db:  db,
 		row: db.pool.QueryRow(ctx, sql, args...),
 	}
@@ -154,7 +157,10 @@ func (db *Database) QueryRow(ctx context.Context, sql string, args ...interface{
 // QueryRows executes a SQL query on a new connection
 func (db *Database) QueryRows(ctx context.Context, sql string, args ...interface{}) Rows {
 	rows, err := db.pool.Query(ctx, sql, args...)
-	return rowsGetter{
+	if err != nil {
+		err = newError(err, "unable to scan row")
+	}
+	return &rowsGetter{
 		db:   db,
 		ctx:  ctx,
 		rows: rows,
@@ -168,11 +174,14 @@ func (db *Database) Copy(ctx context.Context, tableName string, columnNames []st
 		ctx,
 		pgx.Identifier{tableName},
 		columnNames,
-		copyWithCallback{
+		&copyWithCallback{
 			ctx:      ctx,
 			callback: callback,
 		},
 	)
+	if err != nil {
+		err = newError(err, "unable to execute command")
+	}
 
 	// Done
 	return n, db.processError(err)

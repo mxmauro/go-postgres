@@ -19,7 +19,10 @@ type rowGetter struct {
 	row pgx.Row
 }
 
-func (r rowGetter) Scan(dest ...interface{}) error {
+func (r *rowGetter) Scan(dest ...interface{}) error {
 	err := r.row.Scan(dest...)
+	if err != nil {
+		err = newError(err, "unable to scan row")
+	}
 	return r.db.processError(err)
 }
