@@ -26,13 +26,13 @@ type rowsGetter struct {
 	err  error
 }
 
-func (r rowsGetter) Do(callback ScanRowsCallback) error {
+func (r *rowsGetter) Do(callback ScanRowsCallback) error {
 	if r.err == nil {
 		// Scan returned rows
 		for r.rows.Next() {
 			cont, err := callback(r.ctx, r)
 			if err != nil {
-				r.err = err
+				r.err = newError(err, "callback returned failure")
 				break
 			}
 			if !cont {
@@ -46,7 +46,10 @@ func (r rowsGetter) Do(callback ScanRowsCallback) error {
 	return r.db.processError(r.err)
 }
 
-func (r rowsGetter) Scan(dest ...interface{}) error {
+func (r *rowsGetter) Scan(dest ...interface{}) error {
 	err := r.rows.Scan(dest...)
+	if err != nil {
+		err = newError(err, "unable to scan row")
+	}
 	return r.db.processError(err)
 }

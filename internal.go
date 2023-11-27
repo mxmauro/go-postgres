@@ -21,7 +21,7 @@ func (db *Database) getTx(ctx context.Context) (pgx.Tx, error) {
 		DeferrableMode: pgx.NotDeferrable,
 	})
 	if err != nil {
-		return nil, newError(err, "unable to start db transaction")
+		return nil, newError(err, "unable to start transaction")
 	}
 
 	//Done

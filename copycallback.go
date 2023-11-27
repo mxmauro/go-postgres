@@ -17,7 +17,7 @@ type copyWithCallback struct {
 
 // -----------------------------------------------------------------------------
 
-func (c copyWithCallback) Next() bool {
+func (c *copyWithCallback) Next() bool {
 	if c.err != nil || c.counter < 0 {
 		return false
 	}
@@ -37,7 +37,7 @@ func (c copyWithCallback) Next() bool {
 	return true
 }
 
-func (c copyWithCallback) Values() ([]interface{}, error) {
+func (c *copyWithCallback) Values() ([]interface{}, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -49,6 +49,6 @@ func (c copyWithCallback) Values() ([]interface{}, error) {
 	return data, nil
 }
 
-func (c copyWithCallback) Err() error {
+func (c *copyWithCallback) Err() error {
 	return c.err
 }

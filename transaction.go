@@ -29,7 +29,7 @@ func (tx *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (int64,
 
 // QueryRow executes a SQL query within the transaction.
 func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) Row {
-	return rowGetter{
+	return &rowGetter{
 		db:  tx.db,
 		row: tx.tx.QueryRow(ctx, sql, args...),
 	}
@@ -38,7 +38,7 @@ func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) Row
 // QueryRows executes a SQL query within the transaction.
 func (tx *Tx) QueryRows(ctx context.Context, sql string, args ...interface{}) Rows {
 	rows, err := tx.tx.Query(ctx, sql, args...)
-	return rowsGetter{
+	return &rowsGetter{
 		db:   tx.db,
 		ctx:  ctx,
 		rows: rows,
@@ -52,7 +52,7 @@ func (tx *Tx) Copy(ctx context.Context, tableName string, columnNames []string, 
 		ctx,
 		pgx.Identifier{tableName},
 		columnNames,
-		copyWithCallback{
+		&copyWithCallback{
 			ctx:      ctx,
 			callback: callback,
 		},
