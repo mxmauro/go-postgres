@@ -74,4 +74,4 @@ func main() {
 
 ## LICENSE
 
-See `LICENSE` file for details.
+See [LICENSE](/LICENSE) file for details.

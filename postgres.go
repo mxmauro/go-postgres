@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,16 +61,19 @@ const (
 
 // New creates a new postgresql database driver.
 func New(ctx context.Context, opts Options) (*Database, error) {
-	var sslMode string
-
-	// Create database object
-	db := Database{}
-	db.err.mutex = sync.Mutex{}
-
-	// Setup basic configuration options
+	// Validate options
+	if len(opts.Host) == 0 {
+		return nil, errors.New("invalid host")
+	}
+	if len(opts.User) == 0 {
+		return nil, errors.New("invalid user name")
+	}
+	if len(opts.Name) == 0 {
+		return nil, errors.New("invalid database name")
+	}
+	sslMode := "disable"
 	switch opts.SSLMode {
 	case SSLModeDisable:
-		sslMode = "disable"
 	case SSLModeAllow:
 		sslMode = "prefer"
 	case SSLModeRequired:
@@ -75,6 +81,10 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 	default:
 		return nil, errors.New("invalid SSL mode")
 	}
+
+	// Create database object
+	db := Database{}
+	db.err.mutex = sync.Mutex{}
 
 	connString := fmt.Sprintf(
 		"host='%s' port=%d user='%s' password='%s' dbname='%s' sslmode=%s",
@@ -108,6 +118,82 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 
 	// Done
 	return &db, nil
+}
+
+// NewFromURL creates a new postgresql database driver from an URL
+func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
+	opts := Options{}
+
+	u, err := url.ParseRequestURI(rawUrl)
+	if err != nil {
+		return nil, errors.New("invalid url provided")
+	}
+
+	// Check schema
+	if u.Scheme != "pg" && u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return nil, errors.New("invalid url schema")
+	}
+
+	// Check host name and port
+	opts.Host = u.Hostname()
+	if len(opts.Host) == 0 {
+		return nil, errors.New("invalid host")
+	}
+	s := u.Port()
+	if len(s) == 0 {
+		opts.Port = 5432
+	} else {
+		val, err2 := strconv.Atoi(s)
+		if err2 != nil || val < 1 || val > 65535 {
+			return nil, errors.New("invalid port")
+		}
+		opts.Port = uint16(val)
+	}
+
+	// Check user and password
+	if u.User == nil {
+		return nil, errors.New("invalid user name")
+	}
+	opts.User = u.User.Username()
+	if len(opts.User) == 0 {
+		return nil, errors.New("invalid user name")
+	}
+
+	// Check database name
+	if len(u.Path) < 1 || (!strings.HasPrefix(u.Path, "/")) || strings.Index(u.Path[1:], "/") >= 0 {
+		return nil, errors.New("invalid database name")
+	}
+	opts.Name = u.Path[1:]
+
+	// Check ssl mode
+	opts.SSLMode = SSLModeDisable
+	switch u.Query().Get("sslmode") {
+	case "allow":
+		opts.SSLMode = SSLModeAllow
+
+	case "required":
+		opts.SSLMode = SSLModeRequired
+
+	case "disabled":
+		fallthrough
+	case "":
+
+	default:
+		return nil, errors.New("invalid SSL mode")
+	}
+
+	// Check max connections count
+	s = u.Query().Get("maxconn")
+	if len(s) > 0 {
+		val, err2 := strconv.Atoi(s)
+		if err2 != nil || val < 0 {
+			return nil, errors.New("invalid max connections count")
+		}
+		opts.MaxConns = int32(val)
+	}
+
+	// Create
+	return New(ctx, opts)
 }
 
 // Close shutdown the connection pool
