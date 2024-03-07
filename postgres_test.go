@@ -66,6 +66,7 @@ type TestJSON struct {
 }
 
 var (
+	pgUrl          string
 	pgHost         string
 	pgPort         uint
 	pgUsername     string
@@ -82,10 +83,11 @@ var (
 // -----------------------------------------------------------------------------
 
 func init() {
+	flag.StringVar(&pgUrl, "url", "", "Specifies the Postgres URL.")
 	flag.StringVar(&pgHost, "host", "127.0.0.1", "Specifies the Postgres server host. (Defaults to '127.0.0.1')")
 	flag.UintVar(&pgPort, "port", 5432, "Specifies the Postgres server port. (Defaults to 5432)")
 	flag.StringVar(&pgUsername, "user", "postgres", "Specifies the user name. (Defaults to 'postgres')")
-	flag.StringVar(&pgPassword, "password", "", "Specifies the user passwonrd.")
+	flag.StringVar(&pgPassword, "password", "", "Specifies the user password.")
 	flag.StringVar(&pgDatabaseName, "db", "", "Specifies the database name.")
 
 	testJSON = TestJSON{
@@ -102,56 +104,55 @@ func init() {
 // -----------------------------------------------------------------------------
 
 func TestPostgres(t *testing.T) {
+	var db *postgres.Database
+	var err error
+
 	// Parse and check command-line parameters
 	flag.Parse()
 	checkSettings(t)
 
+	ctx := context.Background()
+
 	// Create database driver
-	db, err := postgres.New(context.Background(), postgres.Options{
-		Host:     pgHost,
-		Port:     uint16(pgPort),
-		User:     pgUsername,
-		Password: pgPassword,
-		Name:     pgDatabaseName,
-	})
+	if len(pgUrl) > 0 {
+		db, err = postgres.NewFromURL(ctx, pgUrl)
+	} else {
+		db, err = postgres.New(ctx, postgres.Options{
+			Host:     pgHost,
+			Port:     uint16(pgPort),
+			User:     pgUsername,
+			Password: pgPassword,
+			Name:     pgDatabaseName,
+		})
+	}
 	if err != nil {
 		t.Fatalf("%v", err.Error())
 	}
-	// We comment the next defer line because we want to do a clean database pool shutdown on errors and
-	// calling fatal exits the process.
-	// defer db.Close()
-
-	ctx := context.Background()
+	defer db.Close()
 
 	t.Log("Creating test table")
 	err = createTestTable(ctx, db)
 	if err != nil {
-		db.Close()
 		t.Fatalf("%v", err.Error())
 	}
 
 	t.Log("Inserting test data")
 	err = insertTestData(ctx, db)
 	if err != nil {
-		db.Close()
 		t.Fatalf("%v", err.Error())
 	}
 
 	t.Log("Reading test data")
 	err = readTestData(ctx, db)
 	if err != nil {
-		db.Close()
 		t.Fatalf("%v", err.Error())
 	}
 
 	t.Log("Reading test data (multi-row)")
 	err = readMultiTestData(ctx, db)
 	if err != nil {
-		db.Close()
 		t.Fatalf("%v", err.Error())
 	}
-
-	db.Close()
 }
 
 // -----------------------------------------------------------------------------
