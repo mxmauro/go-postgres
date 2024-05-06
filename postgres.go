@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/url"
@@ -16,8 +17,17 @@ import (
 
 // -----------------------------------------------------------------------------
 
+const (
+	defaultPoolMaxConns = 32
+)
+
+// -----------------------------------------------------------------------------
+
 // WithinTxCallback defines a callback called in the context of the initiated transaction.
 type WithinTxCallback = func(ctx context.Context, tx Tx) error
+
+// WithinConnCallback defines a callback called in the context of a single connection.
+type WithinConnCallback = func(ctx context.Context, conn Conn) error
 
 // CopyCallback defines a callback that is called for each record being copied to the database
 type CopyCallback func(ctx context.Context, idx int) ([]interface{}, error)
@@ -32,17 +42,19 @@ type Database struct {
 		handler ErrorHandler
 		last    error
 	}
+	nameHash [32]byte
 }
 
 // Options defines the database connection options.
 type Options struct {
-	Host     string `json:"host"`
-	Port     uint16 `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
-	MaxConns int32  `json:"maxConns"`
-	SSLMode  SSLMode
+	Host             string `json:"host"`
+	Port             uint16 `json:"port"`
+	User             string `json:"user"`
+	Password         string `json:"password"`
+	Name             string `json:"name"`
+	MaxConns         int32  `json:"maxConns"`
+	SSLMode          SSLMode
+	ExtendedSettings map[string]string `json:"extendedSettings"`
 }
 
 // ErrorHandler defines a custom error handler.
@@ -86,14 +98,27 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 	db := Database{}
 	db.err.mutex = sync.Mutex{}
 
-	connString := fmt.Sprintf(
+	// Create a hash of the database name
+	h := sha256.New()
+	_, _ = h.Write([]byte(opts.Name))
+	copy(db.nameHash[:], h.Sum(nil))
+
+	// Create PGX pool configuration. Usage of ParseConfig is mandatory :(
+	sbConnString := strings.Builder{}
+	_, _ = sbConnString.WriteString(fmt.Sprintf(
 		"host='%s' port=%d user='%s' password='%s' dbname='%s' sslmode=%s",
 		encodeDSN(opts.Host), opts.Port, encodeDSN(opts.User), encodeDSN(opts.Password), encodeDSN(opts.Name),
 		sslMode,
-	)
-
-	// Create PGX pool configuration. Usage of ParseConfig is mandatory :(
-	poolConfig, err := pgxpool.ParseConfig(connString)
+	))
+	if opts.ExtendedSettings != nil {
+		for k, v := range opts.ExtendedSettings {
+			_, _ = sbConnString.WriteRune(' ')
+			_, _ = sbConnString.WriteString(k)
+			_, _ = sbConnString.WriteRune('=')
+			_, _ = sbConnString.WriteString(encodeDSN(v))
+		}
+	}
+	poolConfig, err := pgxpool.ParseConfig(sbConnString.String())
 	if err != nil {
 		db.Close()
 		return nil, errors.New("unable to parse connection string")
@@ -102,12 +127,13 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 	// Override some settings
 	poolConfig.MaxConns = opts.MaxConns
 	if opts.MaxConns <= 0 {
-		poolConfig.MaxConns = 32
+		poolConfig.MaxConns = defaultPoolMaxConns
 	}
 	poolConfig.MaxConnIdleTime = 10 * time.Minute
 	poolConfig.HealthCheckPeriod = time.Minute
 	poolConfig.MaxConnLifetime = 1 * time.Hour
 	poolConfig.MaxConnLifetimeJitter = time.Minute
+	poolConfig.ConnConfig.ConnectTimeout = 15 * time.Second
 
 	// Create the database connection pool
 	db.pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
@@ -120,9 +146,19 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 	return &db, nil
 }
 
+// IsPostgresURL returns true if the url schema is postgres
+func IsPostgresURL(rawUrl string) bool {
+	return strings.HasPrefix(rawUrl, "pg://") ||
+		strings.HasPrefix(rawUrl, "postgres://") ||
+		strings.HasPrefix(rawUrl, "postgresql://")
+}
+
 // NewFromURL creates a new postgresql database driver from an URL
 func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
-	opts := Options{}
+	opts := Options{
+		SSLMode:  SSLModeAllow,
+		MaxConns: defaultPoolMaxConns,
+	}
 
 	u, err := url.ParseRequestURI(rawUrl)
 	if err != nil {
@@ -139,11 +175,11 @@ func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
 	if len(opts.Host) == 0 {
 		return nil, errors.New("invalid host")
 	}
-	s := u.Port()
-	if len(s) == 0 {
+	port := u.Port()
+	if len(port) == 0 {
 		opts.Port = 5432
 	} else {
-		val, err2 := strconv.Atoi(s)
+		val, err2 := strconv.Atoi(port)
 		if err2 != nil || val < 1 || val > 65535 {
 			return nil, errors.New("invalid port")
 		}
@@ -160,36 +196,49 @@ func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
 	}
 
 	// Check database name
-	if len(u.Path) < 1 || (!strings.HasPrefix(u.Path, "/")) || strings.Index(u.Path[1:], "/") >= 0 {
+	if len(u.Path) < 2 || (!strings.HasPrefix(u.Path, "/")) || strings.Index(u.Path[1:], "/") >= 0 {
 		return nil, errors.New("invalid database name")
 	}
 	opts.Name = u.Path[1:]
 
-	// Check ssl mode
-	opts.SSLMode = SSLModeDisable
-	switch u.Query().Get("sslmode") {
-	case "allow":
-		opts.SSLMode = SSLModeAllow
-
-	case "required":
-		opts.SSLMode = SSLModeRequired
-
-	case "disabled":
-		fallthrough
-	case "":
-
-	default:
-		return nil, errors.New("invalid SSL mode")
-	}
-
-	// Check max connections count
-	s = u.Query().Get("maxconn")
-	if len(s) > 0 {
-		val, err2 := strconv.Atoi(s)
-		if err2 != nil || val < 0 {
-			return nil, errors.New("invalid max connections count")
+	// Parse query parameters
+	for k, values := range u.Query() {
+		v := ""
+		if len(values) > 0 {
+			v = values[0]
 		}
-		opts.MaxConns = int32(val)
+		if k == "sslmode" {
+			// Check ssl mode
+			switch v {
+			case "allow":
+				opts.SSLMode = SSLModeAllow
+
+			case "required":
+				opts.SSLMode = SSLModeRequired
+
+			case "disabled":
+				fallthrough
+			case "":
+
+			default:
+				return nil, errors.New("invalid SSL mode")
+			}
+		} else if k == "maxconns" {
+			// Check max connections count
+			if len(v) > 0 {
+				val, err2 := strconv.Atoi(v)
+				if err2 != nil || val < 0 {
+					return nil, errors.New("invalid max connections count")
+				}
+				opts.MaxConns = int32(val)
+			}
+		} else {
+			// Extended setting
+			if opts.ExtendedSettings == nil {
+				opts.ExtendedSettings = make(map[string]string)
+			}
+			opts.ExtendedSettings[k] = v
+		}
 	}
 
 	// Create
@@ -274,10 +323,14 @@ func (db *Database) Copy(ctx context.Context, tableName string, columnNames []st
 }
 
 // WithinTx executes a callback function within the context of a transaction
-func (db *Database) WithinTx(ctx context.Context, callback WithinTxCallback) error {
-	tx, err := db.getTx(ctx)
+func (db *Database) WithinTx(ctx context.Context, cb WithinTxCallback) error {
+	tx, err := db.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:       pgx.ReadCommitted, //pgx.Serializable,
+		AccessMode:     pgx.ReadWrite,
+		DeferrableMode: pgx.NotDeferrable,
+	})
 	if err == nil {
-		err = callback(ctx, Tx{
+		err = cb(ctx, Tx{
 			db: db,
 			tx: tx,
 		})
@@ -290,6 +343,21 @@ func (db *Database) WithinTx(ctx context.Context, callback WithinTxCallback) err
 		if err != nil {
 			_ = tx.Rollback(context.Background()) // Using context.Background() on purpose
 		}
+	} else {
+		err = newError(err, "unable to start transaction")
+	}
+	return db.processError(err)
+}
+
+// WithinConn executes a callback function within the context of a single connection
+func (db *Database) WithinConn(ctx context.Context, cb WithinConnCallback) error {
+	conn, err := db.pool.Acquire(ctx)
+	if err == nil {
+		err = cb(ctx, Conn{
+			db:   db,
+			conn: conn,
+		})
+		conn.Release()
 	}
 	return db.processError(err)
 }
