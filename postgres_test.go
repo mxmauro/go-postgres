@@ -2,8 +2,6 @@ package postgres_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -65,42 +63,6 @@ type TestJSON struct {
 	Text string `json:"text"`
 }
 
-var (
-	pgUrl          string
-	pgHost         string
-	pgPort         uint
-	pgUsername     string
-	pgPassword     string
-	pgDatabaseName string
-)
-
-var (
-	testJSON      TestJSON
-	testBLOB      []byte
-	testJSONBytes []byte
-)
-
-// -----------------------------------------------------------------------------
-
-func init() {
-	flag.StringVar(&pgUrl, "url", "", "Specifies the Postgres URL.")
-	flag.StringVar(&pgHost, "host", "127.0.0.1", "Specifies the Postgres server host. (Defaults to '127.0.0.1')")
-	flag.UintVar(&pgPort, "port", 5432, "Specifies the Postgres server port. (Defaults to 5432)")
-	flag.StringVar(&pgUsername, "user", "postgres", "Specifies the user name. (Defaults to 'postgres')")
-	flag.StringVar(&pgPassword, "password", "", "Specifies the user password.")
-	flag.StringVar(&pgDatabaseName, "db", "", "Specifies the database name.")
-
-	testJSON = TestJSON{
-		Id:   1,
-		Text: "demo",
-	}
-
-	testBLOB = make([]byte, 1024)
-	_, _ = rand.Read(testBLOB)
-
-	testJSONBytes, _ = json.Marshal(testJSON)
-}
-
 // -----------------------------------------------------------------------------
 
 func TestPostgres(t *testing.T) {
@@ -157,29 +119,11 @@ func TestPostgres(t *testing.T) {
 
 // -----------------------------------------------------------------------------
 
-func checkSettings(t *testing.T) {
-	if len(pgHost) == 0 {
-		t.Fatalf("Server host not specified")
-	}
-	if pgPort > 65535 {
-		t.Fatalf("Server port not specified or invalid")
-	}
-	if len(pgUsername) == 0 {
-		t.Fatalf("User name to access database server not specified")
-	}
-	if len(pgPassword) == 0 {
-		t.Fatalf("User password to access database server not specified")
-	}
-	if len(pgDatabaseName) == 0 {
-		t.Fatalf("Database name not specified")
-	}
-}
-
 func createTestTable(ctx context.Context, db *postgres.Database) error {
 	// Destroy old test table if exists
 	_, err := db.Exec(ctx, `DROP TABLE IF EXISTS go_postgres_test_table CASCADE`)
 	if err != nil {
-		return fmt.Errorf("Unable to drop tables [err=%v]", err.Error())
+		return fmt.Errorf("unable to drop tables [err=%v]", err.Error())
 	}
 
 	// Create the test table
@@ -203,7 +147,7 @@ func createTestTable(ctx context.Context, db *postgres.Database) error {
 		PRIMARY KEY (id)
 	)`)
 	if err != nil {
-		return fmt.Errorf("Unable to create test table [err=%v]", err.Error())
+		return fmt.Errorf("unable to create test table [err=%v]", err.Error())
 	}
 
 	// Done
@@ -216,13 +160,13 @@ func insertTestData(ctx context.Context, db *postgres.Database) error {
 			rd := genTestRowDef(idx, true)
 			err := insertTestRowDef(ctx, tx, rd)
 			if err != nil {
-				return fmt.Errorf("Unable to insert test data [id=%v/err=%v]", rd.id, err.Error())
+				return fmt.Errorf("unable to insert test data [id=%v/err=%v]", rd.id, err.Error())
 			}
 
 			nrd := genTestNullableRowDef(idx, true)
 			err = insertTestNullableRowDef(ctx, tx, nrd)
 			if err != nil {
-				return fmt.Errorf("Unable to insert test data [id=%v/err=%v]", nrd.id, err.Error())
+				return fmt.Errorf("unable to insert test data [id=%v/err=%v]", nrd.id, err.Error())
 			}
 		}
 		// Done
@@ -235,7 +179,7 @@ func readTestData(ctx context.Context, db *postgres.Database) error {
 		compareRd := genTestRowDef(idx, false)
 		rd, err := readTestRowDef(ctx, db, compareRd.id)
 		if err != nil {
-			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", compareRd.id, err.Error())
+			return fmt.Errorf("unable to verify test data [id=%v/err=%v]", compareRd.id, err.Error())
 		}
 		// Do deep comparison
 		if !reflect.DeepEqual(compareRd, rd) {
@@ -245,12 +189,12 @@ func readTestData(ctx context.Context, db *postgres.Database) error {
 		compareNrd := genTestNullableRowDef(idx, false)
 		nrd, err := readTestNullableRowDef(ctx, db, compareNrd.id)
 		if err != nil {
-			return fmt.Errorf("Unable to verify test data [id=%v/err=%v]", compareNrd.id, err.Error())
+			return fmt.Errorf("unable to verify test data [id=%v/err=%v]", compareNrd.id, err.Error())
 		}
 
 		// Do deep comparison
 		if !reflect.DeepEqual(compareNrd, nrd) {
-			return fmt.Errorf("Data mismatch while comparing test data [id=%v]", compareNrd.id)
+			return fmt.Errorf("data mismatch while comparing test data [id=%v]", compareNrd.id)
 		}
 	}
 
@@ -265,17 +209,17 @@ func readMultiTestData(ctx context.Context, db *postgres.Database) error {
 	}
 	rd, err := readMultiTestRowDef(ctx, db, compareRd)
 	if err != nil {
-		return fmt.Errorf("Unable to verify test data [err=%v]", err.Error())
+		return fmt.Errorf("unable to verify test data [err=%v]", err.Error())
 	}
 
 	// Do deep comparison
 	if len(compareRd) != len(rd) {
-		return fmt.Errorf("Data mismatch while comparing test data [len1=%d/len2=%d]", len(compareRd), len(rd))
+		return fmt.Errorf("data mismatch while comparing test data [len1=%d/len2=%d]", len(compareRd), len(rd))
 	}
 
 	for idx := 0; idx < len(rd); idx++ {
 		if !reflect.DeepEqual(compareRd[idx], rd[idx]) {
-			return fmt.Errorf("Data mismatch while comparing test data [id=%v]", compareRd[idx].id)
+			return fmt.Errorf("data mismatch while comparing test data [id=%v]", compareRd[idx].id)
 		}
 	}
 
@@ -515,23 +459,4 @@ func readTestNullableRowDef(ctx context.Context, db *postgres.Database, id int) 
 
 	// Done
 	return nrd, nil
-}
-
-func addressOf[T any](x T) *T {
-	return &x
-}
-
-func jsonReEncode(src string) (string, error) {
-	var v interface{}
-
-	err := json.Unmarshal([]byte(src), &v)
-	if err == nil {
-		var reencoded []byte
-
-		reencoded, err = json.Marshal(v)
-		if err == nil {
-			return string(reencoded), nil
-		}
-	}
-	return "", err
 }

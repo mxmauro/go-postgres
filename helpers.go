@@ -48,3 +48,7 @@ func newError(wrappedErr error, text string) *Error {
 func encodeDSN(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
+
+func quoteIdentifier(s string) string {
+	return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+}
