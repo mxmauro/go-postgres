@@ -2,7 +2,7 @@ module github.com/randlabs/go-postgres
 
 go 1.19
 
-require github.com/jackc/pgx/v5 v5.5.4
+require github.com/jackc/pgx/v5 v5.6.0
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

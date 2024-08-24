@@ -3,6 +3,7 @@ package postgres
 import (
 	"errors"
 	"net"
+	"strings"
 )
 
 // -----------------------------------------------------------------------------
@@ -40,6 +41,9 @@ type NoRowsError struct {
 
 // Unwrap returns the underlying error.
 func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.err
 }
 
@@ -48,11 +52,43 @@ func (e *Error) Error() string {
 	if e == nil {
 		return ""
 	}
-	s := e.message
+
+	sb := strings.Builder{}
+	_, _ = sb.WriteString(e.message)
 	if e.err != nil {
-		s += " [err=" + e.err.Error() + "]"
+		_, _ = sb.WriteString(" [err=" + e.err.Error() + "]")
 	}
-	return s
+	if e.Details != nil {
+		_, _ = sb.WriteString(" [code=" + e.Details.Code + "]")
+	}
+	return sb.String()
+}
+
+func (e *Error) IsDuplicateKeyError() bool {
+	if e != nil && e.Details != nil {
+		if e.Details.Code == "23505" {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Error) IsConstraintViolationError() bool {
+	if e != nil && e.Details != nil {
+		switch e.Details.Code {
+		case "23000":
+			return true
+		case "23502":
+			return true
+		case "23503":
+			return true
+		case "23514":
+			return true
+		case "23P01":
+			return true
+		}
+	}
+	return false
 }
 
 func (e *NoRowsError) Error() string {
@@ -66,6 +102,24 @@ func IsDatabaseError(err error) bool {
 	var e *Error
 
 	return errors.As(err, &e)
+}
+
+func IsDuplicateKeyError(err error) bool {
+	var e *Error
+
+	if errors.As(err, &e) {
+		return e.IsDuplicateKeyError()
+	}
+	return false
+}
+
+func IsConstraintViolationError(err error) bool {
+	var e *Error
+
+	if errors.As(err, &e) {
+		return e.IsConstraintViolationError()
+	}
+	return false
 }
 
 // IsNoRowsError returns true if the given error is the result of returning an empty result set.
