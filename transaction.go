@@ -27,8 +27,10 @@ func (tx *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (int64,
 	ct, err := tx.tx.Exec(ctx, sql, args...)
 	if err == nil {
 		affectedRows = ct.RowsAffected()
+	} else {
+		err = newError(err, "unable to execute command")
 	}
-	return affectedRows, tx.db.processError(err)
+	return affectedRows, tx.db.handleError(err)
 }
 
 // QueryRow executes a SQL query within the transaction.
@@ -46,24 +48,24 @@ func (tx *Tx) QueryRows(ctx context.Context, sql string, args ...interface{}) Ro
 		db:   tx.db,
 		ctx:  ctx,
 		rows: rows,
-		err:  err,
+		err:  newError(err, "unable to run query"),
 	}
 }
 
 // Copy executes a SQL copy query within the transaction.
-func (tx *Tx) Copy(ctx context.Context, tableName string, columnNames []string, callback CopyCallback) (int64, error) {
+func (tx *Tx) Copy(ctx context.Context, tableName string, columnNames []string, cb CopyCallback) (int64, error) {
 	n, err := tx.tx.CopyFrom(
 		ctx,
 		pgx.Identifier{tableName},
 		columnNames,
 		&copyWithCallback{
-			ctx:      ctx,
-			callback: callback,
+			ctx: ctx,
+			cb:  cb,
 		},
 	)
 
 	// Done
-	return n, tx.db.processError(err)
+	return n, tx.db.handleError(newError(err, "unable to execute command"))
 }
 
 // WithinTx executes a callback function within the context of a nested transaction.
@@ -79,6 +81,8 @@ func (tx *Tx) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 			if err != nil {
 				err = newError(err, "unable to commit db transaction")
 			}
+		} else {
+			err = newError(err, "callback returned failure")
 		}
 		if err != nil {
 			_ = innerTx.Rollback(context.Background()) // Using context.Background() on purpose
@@ -86,5 +90,5 @@ func (tx *Tx) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 	} else {
 		err = newError(err, "unable to start transaction")
 	}
-	return tx.db.processError(err)
+	return tx.db.handleError(err)
 }

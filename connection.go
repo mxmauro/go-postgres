@@ -28,8 +28,10 @@ func (c *Conn) Exec(ctx context.Context, sql string, args ...interface{}) (int64
 	ct, err := c.conn.Exec(ctx, sql, args...)
 	if err == nil {
 		affectedRows = ct.RowsAffected()
+	} else {
+		err = newError(err, "")
 	}
-	return affectedRows, c.db.processError(err)
+	return affectedRows, c.db.handleError(err)
 }
 
 // QueryRow executes a SQL query within the single connection.
@@ -47,7 +49,7 @@ func (c *Conn) QueryRows(ctx context.Context, sql string, args ...interface{}) R
 		db:   c.db,
 		ctx:  ctx,
 		rows: rows,
-		err:  err,
+		err:  newError(err, "unable to run query"),
 	}
 }
 
@@ -58,22 +60,32 @@ func (c *Conn) Copy(ctx context.Context, tableName string, columnNames []string,
 		pgx.Identifier{tableName},
 		columnNames,
 		&copyWithCallback{
-			ctx:      ctx,
-			callback: callback,
+			ctx: ctx,
+			cb:  callback,
 		},
 	)
 
 	// Done
-	return n, c.db.processError(err)
+	return n, c.db.handleError(newError(err, "unable to execute command"))
 }
 
 // WithinTx executes a callback function within the context of a single connection.
-func (c *Conn) WithinTx(ctx context.Context, cb WithinTxCallback) error {
-	innerTx, err := c.conn.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:       pgx.ReadCommitted, //pgx.Serializable,
+func (c *Conn) WithinTx(ctx context.Context, cb WithinTxCallback, opts ...WithinTxOptions) error {
+	txOpts := pgx.TxOptions{
+		IsoLevel:       pgx.ReadCommitted,
 		AccessMode:     pgx.ReadWrite,
 		DeferrableMode: pgx.NotDeferrable,
-	})
+	}
+	if len(opts) > 0 {
+		if opts[0].ReadOnly {
+			txOpts.AccessMode = pgx.ReadOnly
+		}
+		if opts[0].RepeatableRead {
+			txOpts.IsoLevel = pgx.RepeatableRead
+		}
+	}
+
+	innerTx, err := c.conn.BeginTx(ctx, txOpts)
 	if err == nil {
 		err = cb(ctx, Tx{
 			db: c.db,
@@ -84,6 +96,8 @@ func (c *Conn) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 			if err != nil {
 				err = newError(err, "unable to commit db transaction")
 			}
+		} else {
+			err = newError(err, "callback returned failure")
 		}
 		if err != nil {
 			_ = innerTx.Rollback(context.Background()) // Using context.Background() on purpose
@@ -91,5 +105,5 @@ func (c *Conn) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 	} else {
 		err = newError(err, "unable to start transaction")
 	}
-	return c.db.processError(err)
+	return c.db.handleError(err)
 }

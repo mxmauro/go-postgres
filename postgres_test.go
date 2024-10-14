@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/randlabs/go-postgres"
+	"github.com/mxmauro/go-postgres/v2"
 )
 
 // -----------------------------------------------------------------------------

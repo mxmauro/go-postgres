@@ -2,8 +2,21 @@ package postgres
 
 import (
 	"errors"
-	"net"
 	"strings"
+)
+
+// -----------------------------------------------------------------------------
+
+type ErrorType int
+
+const (
+	ErrorTypeNone                ErrorType = iota
+	ErrorTypeConnection          ErrorType = iota
+	ErrorTypePostgresGeneric     ErrorType = iota
+	ErrorTypeDuplicateKey        ErrorType = iota
+	ErrorTypeConstraintViolation ErrorType = iota
+	ErrorTypeTxSerialization     ErrorType = iota
+	ErrorTypeNoRows              ErrorType = 10000
 )
 
 // -----------------------------------------------------------------------------
@@ -13,6 +26,7 @@ type Error struct {
 	message string
 	err     error // Err is the underlying error that occurred during the operation.
 	Details *ErrorDetails
+	Type    ErrorType
 }
 
 type ErrorDetails struct {
@@ -50,45 +64,24 @@ func (e *Error) Unwrap() error {
 // Error returns a string representation of the error.
 func (e *Error) Error() string {
 	if e == nil {
-		return ""
+		return "<nil>"
 	}
 
 	sb := strings.Builder{}
-	_, _ = sb.WriteString(e.message)
-	if e.err != nil {
-		_, _ = sb.WriteString(" [err=" + e.err.Error() + "]")
+	if len(e.message) > 0 {
+		_, _ = sb.WriteString(e.message)
+		if e.err != nil {
+			_, _ = sb.WriteString(" [err=" + e.err.Error() + "]")
+		}
+	} else if e.err != nil {
+		_, _ = sb.WriteString(e.err.Error())
+	} else {
+		_, _ = sb.WriteString("<nil>")
 	}
 	if e.Details != nil {
 		_, _ = sb.WriteString(" [code=" + e.Details.Code + "]")
 	}
 	return sb.String()
-}
-
-func (e *Error) IsDuplicateKeyError() bool {
-	if e != nil && e.Details != nil {
-		if e.Details.Code == "23505" {
-			return true
-		}
-	}
-	return false
-}
-
-func (e *Error) IsConstraintViolationError() bool {
-	if e != nil && e.Details != nil {
-		switch e.Details.Code {
-		case "23000":
-			return true
-		case "23502":
-			return true
-		case "23503":
-			return true
-		case "23514":
-			return true
-		case "23P01":
-			return true
-		}
-	}
-	return false
 }
 
 func (e *NoRowsError) Error() string {
@@ -97,29 +90,18 @@ func (e *NoRowsError) Error() string {
 
 // -----------------------------------------------------------------------------
 
-// IsDatabaseError returns true if the given error object is a database error.
-func IsDatabaseError(err error) bool {
+// TypeOfError returns the type of error.
+func TypeOfError(err error) ErrorType {
 	var e *Error
-
-	return errors.As(err, &e)
-}
-
-func IsDuplicateKeyError(err error) bool {
-	var e *Error
+	var nre *NoRowsError
 
 	if errors.As(err, &e) {
-		return e.IsDuplicateKeyError()
+		return e.Type
 	}
-	return false
-}
-
-func IsConstraintViolationError(err error) bool {
-	var e *Error
-
-	if errors.As(err, &e) {
-		return e.IsConstraintViolationError()
+	if errors.As(err, &nre) {
+		return ErrorTypeNoRows
 	}
-	return false
+	return ErrorTypeNone
 }
 
 // IsNoRowsError returns true if the given error is the result of returning an empty result set.
@@ -127,18 +109,4 @@ func IsNoRowsError(err error) bool {
 	var e *NoRowsError
 
 	return errors.As(err, &e)
-}
-
-// IsNetworkError returns true if the error is related to a network issue.
-func IsNetworkError(err error) bool {
-	if err != nil {
-		var ne net.Error
-		var netOpErr *net.OpError
-		var netDnsErr *net.DNSError
-
-		if errors.As(err, &ne) || errors.As(err, &netOpErr) || errors.As(err, &netDnsErr) {
-			return true
-		}
-	}
-	return false
 }

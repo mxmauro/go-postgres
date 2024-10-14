@@ -53,8 +53,16 @@ type Options struct {
 	Password         string `json:"password"`
 	Name             string `json:"name"`
 	MaxConns         int32  `json:"maxConns"`
+	ConnTimeout      string `json:"connTimeout"`
+	IdleTimeout      string `json:"idleTimeout"`
 	SSLMode          SSLMode
 	ExtendedSettings map[string]string `json:"extendedSettings"`
+}
+
+// WithinTxOptions defines some transaction options
+type WithinTxOptions struct {
+	ReadOnly       bool
+	RepeatableRead bool
 }
 
 // ErrorHandler defines a custom error handler.
@@ -125,15 +133,33 @@ func New(ctx context.Context, opts Options) (*Database, error) {
 	}
 
 	// Override some settings
-	poolConfig.MaxConns = opts.MaxConns
-	if opts.MaxConns <= 0 {
-		poolConfig.MaxConns = defaultPoolMaxConns
-	}
+	poolConfig.MaxConns = defaultPoolMaxConns
 	poolConfig.MaxConnIdleTime = 10 * time.Minute
 	poolConfig.HealthCheckPeriod = time.Minute
 	poolConfig.MaxConnLifetime = 1 * time.Hour
 	poolConfig.MaxConnLifetimeJitter = time.Minute
 	poolConfig.ConnConfig.ConnectTimeout = 15 * time.Second
+	if opts.MaxConns > 0 {
+		poolConfig.MaxConns = opts.MaxConns
+	}
+	if len(opts.ConnTimeout) > 0 {
+		poolConfig.ConnConfig.ConnectTimeout, err = time.ParseDuration(opts.ConnTimeout)
+		if err != nil {
+			return nil, errors.New("invalid connection timeout value")
+		}
+		if poolConfig.ConnConfig.ConnectTimeout < 2*time.Second {
+			poolConfig.ConnConfig.ConnectTimeout = 2 * time.Second
+		}
+	}
+	if len(opts.IdleTimeout) > 0 {
+		poolConfig.MaxConnIdleTime, err = time.ParseDuration(opts.IdleTimeout)
+		if err != nil {
+			return nil, errors.New("invalid idle timeout value")
+		}
+		if poolConfig.MaxConnIdleTime < 10*time.Second {
+			poolConfig.MaxConnIdleTime = 10 * time.Second
+		}
+	}
 
 	// Create the database connection pool
 	db.pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
@@ -207,7 +233,8 @@ func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
 		if len(values) > 0 {
 			v = values[0]
 		}
-		if k == "sslmode" {
+		switch k {
+		case "sslmode":
 			// Check ssl mode
 			switch v {
 			case "allow":
@@ -223,7 +250,8 @@ func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
 			default:
 				return nil, errors.New("invalid SSL mode")
 			}
-		} else if k == "maxconns" {
+
+		case "maxconns":
 			// Check max connections count
 			if len(v) > 0 {
 				val, err2 := strconv.Atoi(v)
@@ -232,7 +260,15 @@ func NewFromURL(ctx context.Context, rawUrl string) (*Database, error) {
 				}
 				opts.MaxConns = int32(val)
 			}
-		} else {
+
+		case "conntimeout":
+			opts.ConnTimeout = v
+		case "idletimeout":
+			opts.IdleTimeout = v
+
+		case "":
+
+		default:
 			// Extended setting
 			if opts.ExtendedSettings == nil {
 				opts.ExtendedSettings = make(map[string]string)
@@ -264,11 +300,14 @@ func (db *Database) SetEventHandler(handler ErrorHandler) {
 
 // Exec executes an SQL statement on a new connection
 func (db *Database) Exec(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+	affectedRows := int64(0)
 	ct, err := db.pool.Exec(ctx, sql, args...)
-	if err != nil {
+	if err == nil {
+		affectedRows = ct.RowsAffected()
+	} else {
 		err = newError(err, "unable to execute command")
 	}
-	return ct.RowsAffected(), db.processError(err)
+	return affectedRows, db.handleError(err)
 }
 
 // QueryRow executes a SQL query on a new connection
@@ -292,43 +331,47 @@ func (db *Database) QueryRow(ctx context.Context, sql string, args ...interface{
 // QueryRows executes a SQL query on a new connection
 func (db *Database) QueryRows(ctx context.Context, sql string, args ...interface{}) Rows {
 	rows, err := db.pool.Query(ctx, sql, args...)
-	if err != nil {
-		err = newError(err, "unable to scan row")
-	}
 	return &rowsGetter{
 		db:   db,
 		ctx:  ctx,
 		rows: rows,
-		err:  err,
+		err:  newError(err, "unable to run query"),
 	}
 }
 
 // Copy executes a SQL copy query within the transaction.
-func (db *Database) Copy(ctx context.Context, tableName string, columnNames []string, callback CopyCallback) (int64, error) {
+func (db *Database) Copy(ctx context.Context, tableName string, columnNames []string, cb CopyCallback) (int64, error) {
 	n, err := db.pool.CopyFrom(
 		ctx,
 		pgx.Identifier{tableName},
 		columnNames,
 		&copyWithCallback{
-			ctx:      ctx,
-			callback: callback,
+			ctx: ctx,
+			cb:  cb,
 		},
 	)
-	if err != nil {
-		err = newError(err, "unable to execute command")
-	}
 
 	// Done
-	return n, db.processError(err)
+	return n, db.handleError(newError(err, "unable to execute command"))
 }
 
 // WithinTx executes a callback function within the context of a transaction
-func (db *Database) WithinTx(ctx context.Context, cb WithinTxCallback) error {
-	tx, err := db.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:       pgx.ReadCommitted, //pgx.Serializable,
+func (db *Database) WithinTx(ctx context.Context, cb WithinTxCallback, opts ...WithinTxOptions) error {
+	txOpts := pgx.TxOptions{
+		IsoLevel:       pgx.ReadCommitted,
 		AccessMode:     pgx.ReadWrite,
 		DeferrableMode: pgx.NotDeferrable,
-	})
+	}
+	if len(opts) > 0 {
+		if opts[0].ReadOnly {
+			txOpts.AccessMode = pgx.ReadOnly
+		}
+		if opts[0].RepeatableRead {
+			txOpts.IsoLevel = pgx.RepeatableRead
+		}
+	}
+
+	tx, err := db.pool.BeginTx(ctx, txOpts)
 	if err == nil {
 		err = cb(ctx, Tx{
 			db: db,
@@ -339,6 +382,8 @@ func (db *Database) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 			if err != nil {
 				err = newError(err, "unable to commit db transaction")
 			}
+		} else {
+			err = newError(err, "callback returned failure")
 		}
 		if err != nil {
 			_ = tx.Rollback(context.Background()) // Using context.Background() on purpose
@@ -346,7 +391,7 @@ func (db *Database) WithinTx(ctx context.Context, cb WithinTxCallback) error {
 	} else {
 		err = newError(err, "unable to start transaction")
 	}
-	return db.processError(err)
+	return db.handleError(err)
 }
 
 // WithinConn executes a callback function within the context of a single connection
@@ -357,7 +402,12 @@ func (db *Database) WithinConn(ctx context.Context, cb WithinConnCallback) error
 			db:   db,
 			conn: conn,
 		})
+		if err != nil {
+			err = newError(err, "callback returned failure")
+		}
 		conn.Release()
+	} else {
+		err = newError(err, "unable to acquire a connection from the pool")
 	}
-	return db.processError(err)
+	return db.handleError(err)
 }

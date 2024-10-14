@@ -8,22 +8,25 @@ import (
 // -----------------------------------------------------------------------------
 
 type copyWithCallback struct {
-	ctx      context.Context
-	callback CopyCallback
-	counter  int
-	data     []interface{}
-	err      error
+	ctx     context.Context
+	cb      CopyCallback
+	counter int
+	data    []interface{}
+	err     error
 }
 
 // -----------------------------------------------------------------------------
 
 func (c *copyWithCallback) Next() bool {
+	var err error
+
 	if c.err != nil || c.counter < 0 {
 		return false
 	}
 
-	c.data, c.err = c.callback(c.ctx, c.counter)
-	if c.err != nil {
+	c.data, err = c.cb(c.ctx, c.counter)
+	if err != nil {
+		c.err = newError(err, "")
 		c.data = nil
 		return false
 	}

@@ -1,6 +1,11 @@
-# go-postgres
+# go-postgres (v2)
 
 A library that simplifies access to PostgreSQL databases.
+
+##### NOTE:
+
+* This is a fork of the original [randlabs/go-postgres](https://github.com/randlabs/go-postgres) library.
+  May contain some modified functionality.
 
 #### Some considerations
 
@@ -23,7 +28,7 @@ package main
 import (
 	"context"
 
-	"github.com/randlabs/go-postgres"
+	"github.com/mxmauro/go-postgres/v2"
 )
 
 type Data struct {

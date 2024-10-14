@@ -74,11 +74,11 @@ func jsonReEncode(src string) (string, error) {
 
 	err := json.Unmarshal([]byte(src), &v)
 	if err == nil {
-		var reencoded []byte
+		var reEncoded []byte
 
-		reencoded, err = json.Marshal(v)
+		reEncoded, err = json.Marshal(v)
 		if err == nil {
-			return string(reencoded), nil
+			return string(reEncoded), nil
 		}
 	}
 	return "", err

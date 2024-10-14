@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/randlabs/go-postgres"
+	"github.com/mxmauro/go-postgres/v2"
 )
 
 // -----------------------------------------------------------------------------
