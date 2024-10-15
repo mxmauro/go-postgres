@@ -4,7 +4,7 @@ A library that simplifies access to PostgreSQL databases.
 
 ##### NOTE:
 
-* This is a fork of the original [randlabs/go-postgres](https://github.com/randlabs/go-postgres) library.
+* This is a fork of the original [RandLabs.IO's PostgreSQL library](https://github.com/randlabs/go-postgres).
   May contain some modified functionality.
 
 #### Some considerations
